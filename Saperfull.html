@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sapper: Cyberpunk OS v7</title>
+    <style>
+        :root {
+            --accent: #00ff9d;
+            --danger: #ff0055;
+            --bg: #05060a;
+            --panel: rgba(15, 18, 25, 0.9);
+        }
+
+        * { touch-action: none; -webkit-touch-callout: none; user-select: none; box-sizing: border-box; }
+        body { 
+            background: var(--bg); color: var(--accent);
+            font-family: 'Segoe UI', 'Consolas', monospace;
+            margin: 0; padding: 15px; min-height: 100vh;
+            display: flex; flex-direction: column; align-items: center;
+        }
+
+        /* Главный контейнер */
+        .main-frame {
+            display: flex; gap: 15px; width: 100%; max-width: 900px;
+            flex-wrap: wrap; justify-content: center;
+        }
+
+        /* Игровой блок */
+        .game-block { flex: 1; min-width: 320px; max-width: 500px; }
+
+        /* Боковая панель успехов */
+        .side-panel {
+            width: 280px; background: var(--panel);
+            border: 1px solid rgba(0, 255, 157, 0.3);
+            border-radius: 8px; padding: 15px;
+            display: flex; flex-direction: column; gap: 10px;
+            backdrop-filter: blur(5px);
+        }
+
+        .header-ui {
+            width: 100%; border: 1px solid var(--accent);
+            background: var(--panel); padding: 10px;
+            border-radius: 8px; margin-bottom: 10px;
+            display: flex; justify-content: space-between; font-size: 11px;
+        }
+
+        .best-record { color: #ffcc00; text-shadow: 0 0 8px #ffcc00; font-weight: bold; }
+
+        .controls { 
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; 
+            margin-bottom: 10px;
+        }
+
+        button { 
+            background: rgba(0,0,0,0.6); border: 1px solid var(--accent); 
+            color: var(--accent); padding: 8px; font-size: 10px;
+            font-weight: bold; cursor: pointer; text-transform: uppercase;
+        }
+        button:hover { background: var(--accent); color: #000; box-shadow: 0 0 10px var(--accent); }
+        button.active { background: rgba(0, 255, 157, 0.2); }
+
+        .canvas-wrap { 
+            position: relative; border: 2px solid var(--accent);
+            background: #000; border-radius: 4px; overflow: hidden;
+        }
+
+        /* Стили логов */
+        .log-item {
+            font-size: 11px; border-bottom: 1px solid rgba(0, 255, 157, 0.1);
+            padding: 5px 0; display: flex; justify-content: space-between;
+        }
+        .log-win { color: var(--accent); }
+        .log-fail { color: var(--danger); }
+
+        canvas { display: block; image-rendering: pixelated; margin: 0 auto; }
+        
+        @media (max-width: 600px) {
+            .side-panel { width: 100%; }
+            .main-frame { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-ui" style="max-width: 900px;">
+        <div>STATUS: <b id="msg">IDLE</b></div>
+        <div class="best-record">★ BEST: <span id="best-time">--:--</span></div>
+        <div>DEATHS: <b id="deaths">0</b></div>
+    </div>
+
+    <div class="main-frame">
+        <div class="game-block">
+            <div class="controls">
+                <button id="help-btn" style="grid-column: span 2" onclick="toggleHelp()">ASSIST: ON</button>
+                <button onclick="init()">REBOOT</button>
+                <button onclick="setDiff(8, 8, 10)">8x8</button>
+                <button onclick="setDiff(10, 10, 15)">10x10</button>
+                <button onclick="setDiff(12, 16, 30)">16x12</button>
+            </div>
+            <div class="canvas-wrap">
+                <canvas id="gameCanvas"></canvas>
+            </div>
+            <div style="margin-top:5px; font-size:10px; opacity:0.6; text-align:center;">
+                TIME: <span id="timer">00:00</span> | MINES: <span id="m-count">0</span>
+            </div>
+        </div>
+
+        <div class="side-panel">
+            <div style="font-size: 12px; border-bottom: 1px solid var(--accent); padding-bottom: 5px;">MISSION_LOG_TERMINAL</div>
+            <div id="log-container">
+                </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    let R = 8, C = 8, M = 10, S = 40;
+    let board = [], gameOver = false, helpEnabled = true;
+    let lastHover = null, startTime, timerInterval, currentSec = 0;
+    
+    // Загрузка данных
+    let totalDeaths = parseInt(localStorage.getItem('cybDeaths') || 0);
+    let bestRecord = parseInt(localStorage.getItem('cybBest')) || 9999;
+    let gameHistory = JSON.parse(localStorage.getItem('cybHistory') || "[]");
+
+    function updateUI() {
+        document.getElementById('deaths').innerText = totalDeaths;
+        document.getElementById('best-time').innerText = bestRecord === 9999 ? "--:--" : formatTime(bestRecord);
+        renderHistory();
+    }
+
+    function formatTime(sec) {
+        const m = Math.floor(sec/60).toString().padStart(2,'0');
+        const s = (sec%60).toString().padStart(2,'0');
+        return `${m}:${s}`;
+    }
+
+    function renderHistory() {
+        const container = document.getElementById('log-container');
+        container.innerHTML = gameHistory.map(h => `
+            <div class="log-item ${h.win ? 'log-win' : 'log-fail'}">
+                <span>${h.win ? 'SUCCESS' : 'CRITICAL'}</span>
+                <span>${h.time}s</span>
+                <span>${h.date}</span>
+            </div>
+        `).join('');
+    }
+
+    function saveGame(win) {
+        const entry = {
+            win: win,
+            time: currentSec,
+            date: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+        };
+        gameHistory.unshift(entry);
+        if(gameHistory.length > 8) gameHistory.pop();
+        localStorage.setItem('cybHistory', JSON.stringify(gameHistory));
+        
+        if(win && currentSec < bestRecord) {
+            bestRecord = currentSec;
+            localStorage.setItem('cybBest', bestRecord);
+            document.getElementById('msg').innerText = "NEW_RECORD!";
+        }
+        updateUI();
+    }
+
+    function setDiff(r, c, m) { R=r; C=c; M=m; init(); }
+    function toggleHelp() { 
+        helpEnabled = !helpEnabled;
+        document.getElementById('help-btn').innerText = `ASSIST: ${helpEnabled ? 'ON' : 'OFF'}`;
+        draw();
+    }
+
+    function init() {
+        const winW = Math.min(window.innerWidth - 40, 500);
+        S = Math.floor(winW / C);
+        canvas.width = C * S; canvas.height = R * S;
+        board = []; gameOver = false; currentSec = 0;
+        document.getElementById('msg').innerText = "SCANNING";
+        document.getElementById('m-count').innerText = M;
+        
+        clearInterval(timerInterval);
+        startTime = Date.now();
+        timerInterval = setInterval(() => {
+            currentSec = Math.floor((Date.now() - startTime) / 1000);
+            document.getElementById('timer').innerText = formatTime(currentSec);
+        }, 1000);
+
+        for(let r=0; r<R; r++) {
+            board[r] = [];
+            for(let c=0; c<C; c++) board[r][c] = { mine: false, rev: false, flag: false, n: 0, r, c };
+        }
+
+        let p = 0; while(p < M) {
+            let r = Math.floor(Math.random()*R), c = Math.floor(Math.random()*C);
+            if(!board[r][c].mine) { board[r][c].mine = true; p++; }
+        }
+
+        for(let r=0; r<R; r++) for(let c=0; c<C; c++) {
+            if(board[r][c].mine) continue;
+            let nbs = 0;
+            for(let i=-1; i<=1; i++) for(let j=-1; j<=1; j++) if(board[r+i] && board[r+i][c+j]?.mine) nbs++;
+            board[r][c].n = nbs;
+        }
+        draw();
+        updateUI();
+    }
+
+    function draw() {
+        ctx.clearRect(0,0,canvas.width, canvas.height);
+        for(let r=0; r<R; r++) for(let c=0; c<C; c++) {
+            let cell = board[r][c], x = c*S, y = r*S;
+            if(cell.rev) {
+                ctx.fillStyle = '#050505'; ctx.fillRect(x, y, S, S);
+                ctx.strokeStyle = '#111'; ctx.strokeRect(x, y, S, S);
+                if(cell.mine) {
+                    ctx.fillStyle = '#ff0055'; ctx.font = `${S*0.6}px Arial`;
+                    ctx.fillText('☢', x+S*0.2, y+S*0.75);
+                } else if(cell.n > 0) {
+                    ctx.fillStyle = ['','#4d94ff','#55ff9d','#ff5577','#c688ff','#ffb355','#55ffff','#ffffff','#888888'][cell.n];
+                    ctx.font = `bold ${S*0.5}px Courier`; ctx.textAlign='center';
+                    ctx.fillText(cell.n, x+S/2, y+S*0.7); ctx.textAlign='left';
+                }
+            } else {
+                ctx.fillStyle = '#161b22'; ctx.fillRect(x+1, y+1, S-2, S-2);
+                ctx.strokeStyle = 'rgba(0, 255, 157, 0.2)'; ctx.strokeRect(x+1, y+1, S-2, S-2);
+                if(cell.flag) {
+                    ctx.fillStyle = '#ff0055'; ctx.font = `${S*0.5}px Arial`;
+                    ctx.fillText('🚩', x+S*0.25, y+S*0.75);
+                }
+            }
+        }
+        if(lastHover) {
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+            ctx.strokeRect(Math.max(0,(lastHover.c-1)*S), Math.max(0,(lastHover.r-1)*S), S*3, S*3);
+            if(helpEnabled && board[lastHover.r][lastHover.c].rev) {
+                let cell = board[lastHover.r][lastHover.c];
+                let nbs = [];
+                for(let i=-1; i<=1; i++) for(let j=-1; j<=1; j++) if(i!==0||j!==0) if(board[cell.r+i] && board[cell.r+i][cell.c+j]) nbs.push(board[cell.r+i][cell.c+j]);
+                let closed = nbs.filter(n => !n.rev), flags = nbs.filter(n => n.flag);
+                nbs.forEach(nb => {
+                    if(!nb.rev) {
+                        if(closed.length === cell.n) { ctx.fillStyle = 'rgba(255,0,85,0.4)'; ctx.fillRect(nb.c*S+4, nb.r*S+4, S-8, S-8); }
+                        else if(flags.length === cell.n) { ctx.fillStyle = 'rgba(0,255,157,0.2)'; ctx.fillRect(nb.c*S+4, nb.r*S+4, S-8, S-8); }
+                    }
+                });
+            }
+            ctx.lineWidth = 1;
+        }
+    }
+
+    function checkWin() {
+        let win = true;
+        for(let r=0; r<R; r++) for(let c=0; c<C; c++) if(!board[r][c].mine && !board[r][c].rev) win = false;
+        if(win) {
+            gameOver = true; clearInterval(timerInterval);
+            document.getElementById('msg').innerText = "MISSION_COMPLETE";
+            saveGame(true);
+        }
+    }
+
+    function handle(r, c, type) {
+        if(gameOver || !board[r] || !board[r][c]) return;
+        let cell = board[r][c];
+        if(type === 'flag') {
+            cell.flag = !cell.flag;
+            if(navigator.vibrate) navigator.vibrate(20);
+        } else {
+            if(cell.flag || cell.rev) return;
+            cell.rev = true;
+            if(cell.mine) {
+                gameOver = true; clearInterval(timerInterval);
+                document.getElementById('msg').innerText = "FAILED";
+                totalDeaths++; localStorage.setItem('cybDeaths', totalDeaths);
+                saveGame(false);
+                if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
+            } else if(cell.n === 0) {
+                for(let i=-1; i<=1; i++) for(let j=-1; j<=1; j++) handle(r+i, c+j, 'dig');
+            }
+        }
+        draw();
+        if(!gameOver) checkWin();
+    }
+
+    canvas.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const c = Math.floor((e.clientX - rect.left) / S), r = Math.floor((e.clientY - rect.top) / S);
+        if(board[r] && board[r][c]) { lastHover = {r, c}; draw(); }
+    };
+    canvas.onmousedown = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const c = Math.floor((e.clientX - rect.left) / S), r = Math.floor((e.clientY - rect.top) / S);
+        if(e.button === 2) handle(r, c, 'flag'); else handle(r, c, 'dig');
+    };
+    canvas.oncontextmenu = e => e.preventDefault();
+
+    let lpt;
+    canvas.ontouchstart = (e) => {
+        const t = e.touches[0], rect = canvas.getBoundingClientRect();
+        const c = Math.floor((t.clientX - rect.left) / S), r = Math.floor((t.clientY - rect.top) / S);
+        lastHover = {r, c}; draw();
+        lpt = setTimeout(() => { handle(r, c, 'flag'); lpt = null; }, 400);
+    };
+    canvas.ontouchend = () => { if(lpt) { clearTimeout(lpt); handle(lastHover.r, lastHover.c, 'dig'); } };
+
+    init();
+    updateUI();
+</script>
+</body>
+</html>
